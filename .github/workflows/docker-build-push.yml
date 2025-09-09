@@ -1,0 +1,57 @@
+name: Build & Push to usdotfhwastoldev
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [ develop, master, "release/*" ]
+  workflow_dispatch:
+env:
+  DOCKERHUB_ORG: usdotfhwastoldev
+  TAG_SUFFIX: humble   # change/remove if you don't want a suffix
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Compute image name & tag
+        id: vars
+        shell: bash
+        run: |
+          IMAGE_NAME="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
+          REPO="docker.io/${{ env.DOCKERHUB_ORG }}/${IMAGE_NAME}"
+          REF="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            TAG="pr-${{ github.event.pull_request.number }}"
+          elif [[ "${REF}" == "master" ]]; then
+            TAG="prod"
+          elif [[ "${REF}" == "develop" ]]; then
+            TAG="develop"
+          elif [[ "${REF}" == release/* ]]; then
+            TAG="candidate"
+          else
+            TAG="${REF//\//-}"
+          fi
+          if [[ -n "${{ env.TAG_SUFFIX }}" ]]; then
+            TAG="${TAG}-${{ env.TAG_SUFFIX }}"
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}"   >> "$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub (usdotfhwastoldev)
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
